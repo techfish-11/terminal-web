@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Terminal</title>
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/xterm/css/xterm.css"
+    />
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        display: flex;
+        min-height: 100vh;
+        align-items: center;
+        justify-content: center;
+        background-color: #000;
+        font-family: sans-serif;
+        color: white;
+        padding: 20px;
+      }
+
+      #container {
+        display: flex;
+        gap: 20px;
+        align-items: flex-start;
+      }
+
+      #terminal {
+        padding: 12px;
+        border: 1px solid #444;
+        border-radius: 12px;
+        width: 720px;
+        background-color: #000;
+        height: 430px;
+      }
+
+      #sidebar {
+        min-width: 300px;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+
+      #status {
+        padding: 12px;
+        background-color: #111;
+        border-radius: 8px;
+      }
+
+      #status h2 {
+        font-size: 1.2em;
+        margin-bottom: 8px;
+      }
+
+      #status p {
+        margin: 4px 0;
+        padding: 4px;
+        background: rgba(255, 255, 255, 0.1);
+        border-radius: 4px;
+      }
+
+      .chart-div {
+        padding: 8px;
+        background: #ccc;
+        border-radius: 8px;
+      }
+
+      canvas {
+        background: #ccc;
+      }
+
+      /* モーダルのスタイル */
+      #modal {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0, 0, 0, 0.8);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        z-index: 1000;
+      }
+
+      #modal-content {
+        background: white;
+        color: black;
+        padding: 20px;
+        border-radius: 8px;
+        text-align: center;
+        max-width: 400px;
+        width: 90%;
+      }
+
+      #modal button {
+        margin-top: 20px;
+        padding: 10px 20px;
+        background-color: #007bff;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+
+      #modal button:hover {
+        background-color: #0056b3;
+      }
+
+      #session-id {
+        padding: 12px;
+        background-color: #222;
+        border-radius: 8px;
+        margin-top: 10px;
+        color: lightblue;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="container">
+      <div id="terminal"></div>
+      <div id="sidebar">
+        <div id="status">
+          <h2>Connection Status</h2>
+          <p id="status-msg">Waiting for connection...</p>
+        </div>
+        <div class="chart-div">
+          <canvas id="trafficChart" width="300" height="200"></canvas>
+        </div>
+        <div id="session-id">Session ID: <span id="session-id-value">N/A</span></div>
+      </div>
+    </div>
+
+    <div id="modal">
+      <div id="modal-content">
+        <h2>terms of service</h2>
+        <p>To use this service, please agree to the <a href="/terms.html">terms of service</a>.</p>
+        <button id="agree-btn">Agree</button>
+      </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/xterm/lib/xterm.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script>
+      const term = new Terminal();
+      term.open(document.getElementById("terminal"));
+      const statusMsg = document.getElementById("status-msg");
+
+      let sentBytes = 0;
+      let receivedBytes = 0;
+
+      document.getElementById("agree-btn").addEventListener("click", () => {
+        document.getElementById("modal").style.display = "none";
+
+        const ws = new WebSocket(
+          (location.protocol === "https:" ? "wss://" : "ws://") + location.host
+        );
+
+        ws.onopen = () => {
+          term.write("\x1b[32mConnected\x1b[m\r\n");
+          statusMsg.textContent = "Connected";
+          statusMsg.style.color = "lightgreen";
+        };
+
+        ws.onmessage = (e) => {
+          const message = JSON.parse(e.data);
+          if (message.type === "session") {
+            document.getElementById("session-id-value").textContent = message.sessionId;
+          } else if (message.type === "data") {
+            term.write(message.data);
+            receivedBytes += new TextEncoder().encode(message.data).length;
+          }
+        };
+
+        ws.onclose = () => {
+          term.write("\r\n\x1b[31mDisconnected\x1b[m\r\n");
+          statusMsg.textContent = "Disconnected";
+          statusMsg.style.color = "red";
+        };
+
+        ws.onerror = () => {
+          statusMsg.textContent = "Error";
+          statusMsg.style.color = "orange";
+        };
+
+        term.onData((data) => {
+          ws.send(JSON.stringify({ type: "data", payload: data }));
+          sentBytes += new TextEncoder().encode(data).length;
+        });
+      });
+
+      const ctx = document.getElementById("trafficChart").getContext("2d");
+      const chart = new Chart(ctx, {
+        type: "line",
+        data: {
+          labels: [],
+          datasets: [
+            {
+              label: "Bytes Sent",
+              borderColor: "rgba(255, 99, 132, 1)",
+              backgroundColor: "rgba(255, 99, 132, 0.2)",
+              data: [],
+            },
+            {
+              label: "Bytes Received",
+              borderColor: "rgba(54, 162, 235, 1)",
+              backgroundColor: "rgba(54, 162, 235, 0.2)",
+              data: [],
+            },
+          ],
+        },
+        options: {
+          responsive: false,
+          animation: false,
+          scales: {
+            x: {
+              ticks: { color: "black" },
+            },
+            y: {
+              beginAtZero: true,
+              ticks: { color: "black" },
+            },
+          },
+        },
+      });
+
+      setInterval(() => {
+        const now = new Date().toLocaleTimeString();
+
+        if (chart.data.labels.length > 30) {
+          chart.data.labels.shift();
+          chart.data.datasets[0].data.shift();
+          chart.data.datasets[1].data.shift();
+        }
+
+        chart.data.labels.push(now);
+        chart.data.datasets[0].data.push(sentBytes);
+        chart.data.datasets[1].data.push(receivedBytes);
+
+        chart.update();
+
+        sentBytes = 0;
+        receivedBytes = 0;
+      }, 1000);
+    </script>
+  </body>
+</html>
